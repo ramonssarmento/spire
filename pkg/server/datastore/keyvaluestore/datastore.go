@@ -1,0 +1,111 @@
+package keyvaluestore
+
+import (
+	"context"
+	"fmt"
+	"io"
+
+	"github.com/sirupsen/logrus"
+	"github.com/spiffe/spire/pkg/server/datastore"
+	"github.com/spiffe/spire/pkg/server/datastore/keyvaluestore/internal/keyvalue"
+	"github.com/spiffe/spire/pkg/server/datastore/keyvaluestore/internal/keyvalue/dynamostore"
+	"github.com/spiffe/spire/pkg/server/datastore/keyvaluestore/internal/record"
+
+	"github.com/hashicorp/hcl"
+)
+
+const (
+	PluginName = "keyvalue"
+)
+
+type Configuration struct {
+	AccessKeyID     string `hcl:"access_key_id" json:"access_key_id"`
+	SecretAccessKey string `hcl:"secret_access_key" json:"secret_access_key"`
+	Region          string `hcl:"region" json:"region"`
+	Endpoint        string `hcl:"endpoint" json:"endpoint"`
+	TableName       string `hcl:"table_name" json:"table_name"`
+	StreamEnable    bool   `hcl:"stream_enable" json:"stream_enable"`
+}
+
+type DataStore struct {
+	datastore.DataStore
+
+	log                     logrus.FieldLogger
+	store                   keyvalue.Store
+	agents                  *record.Cache[agentCodec, *agentIndex, agentObject, *listAttestedNodes]
+	bundles                 *record.Cache[bundleCodec, *bundleIndex, bundleObject, *datastore.ListBundlesRequest]
+	entries                 *record.Cache[entryCodec, *entryIndex, entryObject, *listRegistrationEntries]
+	joinTokens              *record.Cache[joinTokenCodec, *joinTokenIndex, joinTokenObject, *listJoinTokens]
+	federationRelationships *record.Cache[federationRelationshipCodec, *federationRelationshipIndex, federationRelationshipObject, *datastore.ListFederationRelationshipsRequest]
+	entriesEvents           *record.Cache[entryEventCodec, *entryEventIndex, entryEventObject, *listRegistrationEntriesEventsRequest]
+	nodeEvents              *record.Cache[nodeEventCodec, *nodeEventIndex, nodeEventObject, *listAttestedNodesEventsRequest]
+	caJournal               *record.Cache[caJournalCodec, *caJournalIndex, caJournalObject, int64]
+	watch                   io.Closer
+}
+
+func New(log logrus.FieldLogger) *DataStore {
+	return &DataStore{
+		log: log,
+	}
+}
+
+func (ds *DataStore) Configure(ctx context.Context, hclConfiguration string) error {
+	config := &Configuration{}
+	if err := hcl.Decode(config, hclConfiguration); err != nil {
+		return err
+	}
+
+	store, err := dynamostore.Open(ctx, dynamostore.Config{
+		AccessKeyID:     config.AccessKeyID,
+		SecretAccessKey: config.SecretAccessKey,
+		Region:          config.Region,
+		Endpoint:        config.Endpoint,
+		TableName:       config.TableName,
+		StreamEnable:    &config.StreamEnable,
+	})
+
+	if err != nil {
+		return fmt.Errorf("unable to open store: %w", err)
+	}
+
+	ds.store = store
+	ds.agents = record.NewCache[agentCodec, *agentIndex, agentObject, *listAttestedNodes](store, "agent", new(agentIndex))
+	ds.bundles = record.NewCache[bundleCodec, *bundleIndex, bundleObject, *datastore.ListBundlesRequest](store, "bundle", new(bundleIndex))
+	ds.entries = record.NewCache[entryCodec, *entryIndex, entryObject, *listRegistrationEntries](store, "entry", new(entryIndex))
+	ds.joinTokens = record.NewCache[joinTokenCodec, *joinTokenIndex, joinTokenObject, *listJoinTokens](store, "joinToken", new(joinTokenIndex))
+	ds.federationRelationships = record.NewCache[federationRelationshipCodec, *federationRelationshipIndex, federationRelationshipObject, *datastore.ListFederationRelationshipsRequest](store, "federationRelationship", new(federationRelationshipIndex))
+	ds.entriesEvents = record.NewCache[entryEventCodec, *entryEventIndex, entryEventObject, *listRegistrationEntriesEventsRequest](store, "entriesEvents", new(entryEventIndex))
+	ds.nodeEvents = record.NewCache[nodeEventCodec, *nodeEventIndex, nodeEventObject, *listAttestedNodesEventsRequest](store, "nodeEvents", new(nodeEventIndex))
+	ds.caJournal = record.NewCache[caJournalCodec, *caJournalIndex, caJournalObject, int64](store, "caJournal", new(caJournalIndex))
+
+	ds.watch, err = record.Watch(ctx, store, []record.Sink{
+		ds.agents,
+		ds.bundles,
+		ds.entries,
+		ds.joinTokens,
+		ds.federationRelationships,
+		ds.entriesEvents,
+		ds.nodeEvents,
+		ds.caJournal,
+	})
+
+	return err
+}
+
+func (ds *DataStore) Close() error {
+	var closeErr error
+
+	if err := ds.watch.Close(); err != nil {
+		if closeErr != nil {
+			closeErr = err
+		}
+	}
+
+	if err := ds.store.Close(); err != nil {
+		if closeErr != nil {
+			closeErr = err
+		}
+	}
+
+	return closeErr
+}
