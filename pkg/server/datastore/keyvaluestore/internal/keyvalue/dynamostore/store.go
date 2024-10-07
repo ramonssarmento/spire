@@ -74,15 +74,24 @@ func (local *LocalRecord) ConvertToRecord() keyvalue.Record {
 	}
 }
 
-func createClient(ctx context.Context, config Config) (*dynamodb.Client, error) {
+func newAWSConfig(ctx context.Context, c *Config) (aws.Config, error) {
 	cfg, err := awsConfig.LoadDefaultConfig(ctx,
-		awsConfig.WithCredentialsProvider(credentials.StaticCredentialsProvider{
-			Value: aws.Credentials{
-				AccessKeyID: config.AccessKeyID, SecretAccessKey: config.SecretAccessKey,
-			},
-		}),
-		awsConfig.WithRegion(config.Region),
+		awsConfig.WithRegion(c.Region),
 	)
+	if err != nil {
+		return aws.Config{}, err
+	}
+
+	if c.SecretAccessKey != "" && c.AccessKeyID != "" {
+		cfg.Credentials = credentials.NewStaticCredentialsProvider(c.AccessKeyID, c.SecretAccessKey, "")
+	}
+
+	return cfg, nil
+}
+
+func createClient(ctx context.Context, config Config) (*dynamodb.Client, error) {
+	cfg, err := newAWSConfig(ctx, &config)
+
 	if err != nil {
 		return nil, err
 	}
@@ -99,14 +108,8 @@ func createStreamClient(ctx context.Context, config Config, dbClient *dynamodb.C
 		return &dynamoDBStreamsClient{}, nil
 	}
 
-	cfg, err := awsConfig.LoadDefaultConfig(ctx,
-		awsConfig.WithCredentialsProvider(credentials.StaticCredentialsProvider{
-			Value: aws.Credentials{
-				AccessKeyID: config.AccessKeyID, SecretAccessKey: config.SecretAccessKey,
-			},
-		}),
-		awsConfig.WithRegion(config.Region),
-	)
+	cfg, err := newAWSConfig(ctx, &config)
+
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +207,7 @@ func Open(ctx context.Context, config Config) (*Store, error) {
 	if tableExists(ctx, dynamoClient, config.TableName) {
 		fmt.Printf("Dynamo table Spire exist\n")
 	} else {
-		fmt.Printf("Dynamo table Spire not exist, creatring...\n")
+		fmt.Printf("Dynamo table Spire not exist, creating...\n")
 		_, err := dynamoClient.CreateTable(ctx, buildCreateTableInput(config.TableName, config.StreamEnable))
 		if err != nil {
 			fmt.Printf("CreateTable failed", err)
