@@ -145,6 +145,15 @@ func getDynamoDBStreamsArn(ctx context.Context, dbClient *dynamodb.Client, table
 }
 
 func buildCreateTableInput(tableName string, streamEnabled *bool) *dynamodb.CreateTableInput {
+	var streamSpecification *types.StreamSpecification
+
+	if *streamEnabled {
+		streamSpecification = &types.StreamSpecification{
+			StreamEnabled:  streamEnabled,
+			StreamViewType: types.StreamViewTypeKeysOnly,
+		}
+	}
+
 	return &dynamodb.CreateTableInput{
 		AttributeDefinitions: []types.AttributeDefinition{
 			{
@@ -166,12 +175,9 @@ func buildCreateTableInput(tableName string, streamEnabled *bool) *dynamodb.Crea
 				KeyType:       types.KeyTypeRange,
 			},
 		},
-		TableName:   aws.String(tableName),
-		BillingMode: types.BillingModePayPerRequest,
-		StreamSpecification: &types.StreamSpecification{
-			StreamEnabled:  streamEnabled,
-			StreamViewType: types.StreamViewTypeKeysOnly,
-		},
+		TableName:           aws.String(tableName),
+		BillingMode:         types.BillingModePayPerRequest,
+		StreamSpecification: streamSpecification,
 	}
 }
 
@@ -187,6 +193,27 @@ func tableExists(ctx context.Context, client *dynamodb.Client, name string) bool
 		}
 	}
 	return false
+}
+
+func checkTable(ctx context.Context, client *dynamodb.Client, name string) error {
+	for i := 1; i <= 6; i++ {
+		describeTableOutput, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
+			TableName: aws.String(name),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to describe table: %w", err)
+		}
+
+		if describeTableOutput.Table.TableStatus == types.TableStatusActive {
+			fmt.Printf("DynamoDB table %s is now ready.\n", name)
+			return nil
+		}
+
+		fmt.Printf("Waiting for table %s to be created...\n", name)
+		time.Sleep(5 * time.Second)
+	}
+
+	return fmt.Errorf("table %s is not active after waiting", name)
 }
 
 func Open(ctx context.Context, config Config) (*Store, error) {
@@ -212,6 +239,13 @@ func Open(ctx context.Context, config Config) (*Store, error) {
 		if err != nil {
 			fmt.Printf("CreateTable failed", err)
 		}
+	}
+
+	err = checkTable(ctx, dynamoClient, config.TableName)
+	if err != nil {
+		fmt.Printf("Error checking table: %v\n", err)
+	} else {
+		fmt.Println("Table check completed successfully.")
 	}
 
 	streamClient, err := createStreamClient(ctx, config, dynamoClient)
