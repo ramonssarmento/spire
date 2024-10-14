@@ -17,17 +17,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-var validEntryIDChars = &unicode.RangeTable{
-	R16: []unicode.Range16{
-		{0x002d, 0x002e, 1}, // - | .
-		{0x0030, 0x0039, 1}, // [0-9]
-		{0x0041, 0x005a, 1}, // [A-Z]
-		{0x005f, 0x005f, 1}, // _
-		{0x0061, 0x007a, 1}, // [a-z]
-	},
-	LatinOffset: 5,
-}
-
 func (ds *DataStore) CountRegistrationEntries(ctx context.Context, req *datastore.CountRegistrationEntriesRequest) (int32, error) {
 	if req.BySelectors != nil && len(req.BySelectors.Selectors) == 0 {
 		return 0, status.Error(codes.InvalidArgument, "cannot list by empty selector set")
@@ -49,27 +38,40 @@ func (ds *DataStore) CountRegistrationEntries(ctx context.Context, req *datastor
 	return int32(len(records)), err
 }
 
-func (ds *DataStore) CreateRegistrationEntry(ctx context.Context, in *common.RegistrationEntry) (*common.RegistrationEntry, error) {
-	u, err := uuid.NewV4()
-	if err != nil {
-		return nil, dsErr(err, "failed to generate new entry ID")
+func (ds *DataStore) CreateRegistrationEntry(ctx context.Context, entry *common.RegistrationEntry) (*common.RegistrationEntry, error) {
+	if err := validateRegistrationEntry(entry); err != nil {
+		return nil, err
 	}
-	in.EntryId = u.String()
 
-	if err := ds.entries.Create(ctx, entryObject{Entry: in}); err != nil {
+	return ds.createRegistrationEntry(ctx, entry)
+}
+
+func (ds *DataStore) createRegistrationEntry(ctx context.Context, entry *common.RegistrationEntry) (*common.RegistrationEntry, error) {
+	entryID, err := createOrReturnEntryID(entry)
+	if err != nil {
+		return nil, err
+	}
+
+	entry.EntryId = entryID
+
+	if err := ds.entries.Create(ctx, entryObject{Entry: entry}); err != nil {
 		return nil, dsErr(err, "failed to create entry")
 	}
 
 	if err = ds.createRegistrationEntryEvent(ctx, &datastore.RegistrationEntryEvent{
-		EntryID: in.EntryId,
+		EntryID: entry.EntryId,
 	}); err != nil {
 		return nil, err
 	}
 
-	return in, nil
+	return entry, nil
 }
 
 func (ds *DataStore) CreateOrReturnRegistrationEntry(ctx context.Context, entry *common.RegistrationEntry) (*common.RegistrationEntry, bool, error) {
+	if err := validateRegistrationEntry(entry); err != nil {
+		return nil, false, err
+	}
+
 	records, _, err := ds.entries.List(&listRegistrationEntries{
 		ListRegistrationEntriesRequest: datastore.ListRegistrationEntriesRequest{
 			BySpiffeID: entry.SpiffeId,
@@ -85,7 +87,7 @@ func (ds *DataStore) CreateOrReturnRegistrationEntry(ctx context.Context, entry 
 		return records[0].Object.Entry, true, nil
 	}
 
-	newEntry, err := ds.CreateRegistrationEntry(ctx, entry)
+	newEntry, err := ds.createRegistrationEntry(ctx, entry)
 	if err != nil {
 		return nil, false, err
 	}
@@ -178,6 +180,22 @@ func (ds *DataStore) PruneRegistrationEntries(ctx context.Context, expiresBefore
 	return nil
 }
 
+func createOrReturnEntryID(entry *common.RegistrationEntry) (string, error) {
+	if entry.EntryId != "" {
+		return entry.EntryId, nil
+	}
+
+	return newRegistrationEntryID()
+}
+
+func newRegistrationEntryID() (string, error) {
+	u, err := uuid.NewV4()
+	if err != nil {
+		return "", err
+	}
+	return u.String(), nil
+}
+
 func (ds *DataStore) UpdateRegistrationEntry(ctx context.Context, newEntry *common.RegistrationEntry, mask *common.RegistrationEntryMask) (*common.RegistrationEntry, error) {
 	if err := validateRegistrationEntryForUpdate(newEntry, mask); err != nil {
 		return nil, dsErr(err, "failed to update entry")
@@ -190,43 +208,52 @@ func (ds *DataStore) UpdateRegistrationEntry(ctx context.Context, newEntry *comm
 
 	updated := existing.Object
 
-	//TO-DO
-	/*if mask == nil {
-		mask = protoutil.AllTrueCommonRegistrationEntryMask
-	}*/
+	if mask == nil || mask.StoreSvid {
+		updated.Entry.StoreSvid = newEntry.StoreSvid
+	}
 
-	if mask.Selectors {
+	if mask == nil || mask.Selectors {
 		updated.Entry.Selectors = newEntry.Selectors
 	}
-	if mask.ParentId {
-		updated.Entry.ParentId = newEntry.ParentId
-	}
-	if mask.SpiffeId {
-		updated.Entry.SpiffeId = newEntry.SpiffeId
-	}
-	/*if mask.Ttl {
-		updated.Entry.Ttl = newEntry.Ttl
-	}*/
-	if mask.FederatesWith {
-		updated.Entry.FederatesWith = newEntry.FederatesWith
-	}
-	if mask.EntryId {
-		updated.Entry.EntryId = newEntry.EntryId
-	}
-	if mask.Admin {
-		updated.Entry.Admin = newEntry.Admin
-	}
-	if mask.Downstream {
-		updated.Entry.Downstream = newEntry.Downstream
-	}
-	if mask.EntryExpiry {
-		updated.Entry.EntryExpiry = newEntry.EntryExpiry
-	}
-	if mask.DnsNames {
+
+	if mask == nil || mask.DnsNames {
 		updated.Entry.DnsNames = newEntry.DnsNames
 	}
-	if mask.StoreSvid {
-		updated.Entry.StoreSvid = newEntry.StoreSvid
+
+	if mask == nil || mask.SpiffeId {
+		updated.Entry.SpiffeId = newEntry.SpiffeId
+	}
+
+	if mask == nil || mask.ParentId {
+		updated.Entry.ParentId = newEntry.ParentId
+	}
+
+	if mask == nil || mask.X509SvidTtl {
+		updated.Entry.X509SvidTtl = newEntry.X509SvidTtl
+	}
+
+	if mask == nil || mask.Admin {
+		updated.Entry.Admin = newEntry.Admin
+	}
+
+	if mask == nil || mask.Downstream {
+		updated.Entry.Downstream = newEntry.Downstream
+	}
+
+	if mask == nil || mask.EntryExpiry {
+		updated.Entry.EntryExpiry = newEntry.EntryExpiry
+	}
+
+	if mask == nil || mask.JwtSvidTtl {
+		updated.Entry.JwtSvidTtl = newEntry.JwtSvidTtl
+	}
+
+	if mask == nil || mask.Hint {
+		updated.Entry.Hint = newEntry.Hint
+	}
+
+	if mask == nil || mask.FederatesWith {
+		updated.Entry.FederatesWith = newEntry.FederatesWith
 	}
 
 	if err := ds.entries.Update(ctx, updated, existing.Metadata.Revision); err != nil {
@@ -244,11 +271,11 @@ func (ds *DataStore) UpdateRegistrationEntry(ctx context.Context, newEntry *comm
 
 func validateRegistrationEntry(entry *common.RegistrationEntry) error {
 	if entry == nil {
-		return errors.New("invalid request: missing registered entry")
+		return kvError.New("invalid request: missing registered entry")
 	}
 
 	if len(entry.Selectors) == 0 {
-		return errors.New("invalid registration entry: missing selector list")
+		return kvError.New("invalid registration entry: missing selector list")
 	}
 
 	// In case of StoreSvid is set, all entries 'must' be the same type,
@@ -259,31 +286,31 @@ func validateRegistrationEntry(entry *common.RegistrationEntry) error {
 		tpe := entry.Selectors[0].Type
 		for _, t := range entry.Selectors {
 			if tpe != t.Type {
-				return errors.New("invalid registration entry: selector types must be the same when store SVID is enabled")
+				return kvError.New("invalid registration entry: selector types must be the same when store SVID is enabled")
 			}
 		}
 	}
 
 	if len(entry.EntryId) > 255 {
-		return errors.New("invalid registration entry: entry ID too long")
+		return kvError.New("invalid registration entry: entry ID too long")
 	}
 
 	for _, e := range entry.EntryId {
 		if !unicode.In(e, validEntryIDChars) {
-			return errors.New("invalid registration entry: entry ID contains invalid characters")
+			return kvError.New("invalid registration entry: entry ID contains invalid characters")
 		}
 	}
 
 	if len(entry.SpiffeId) == 0 {
-		return errors.New("invalid registration entry: missing SPIFFE ID")
+		return kvError.New("invalid registration entry: missing SPIFFE ID")
 	}
 
 	if entry.X509SvidTtl < 0 {
-		return errors.New("invalid registration entry: X509SvidTtl is not set")
+		return kvError.New("invalid registration entry: X509SvidTtl is not set")
 	}
 
 	if entry.JwtSvidTtl < 0 {
-		return errors.New("invalid registration entry: JwtSvidTtl is not set")
+		return kvError.New("invalid registration entry: JwtSvidTtl is not set")
 	}
 
 	return nil
@@ -291,26 +318,26 @@ func validateRegistrationEntry(entry *common.RegistrationEntry) error {
 
 func validateRegistrationEntryForUpdate(entry *common.RegistrationEntry, mask *common.RegistrationEntryMask) error {
 	if entry == nil {
-		return errors.New("invalid request: missing registered entry")
+		return kvError.New("invalid request: missing registered entry")
 	}
 
 	if (mask == nil || mask.Selectors) && len(entry.Selectors) == 0 {
-		return errors.New("invalid registration entry: missing selector list")
+		return kvError.New("invalid registration entry: missing selector list")
 	}
 
 	if (mask == nil || mask.SpiffeId) &&
 		entry.SpiffeId == "" {
-		return errors.New("invalid registration entry: missing SPIFFE ID")
+		return kvError.New("invalid registration entry: missing SPIFFE ID")
 	}
 
 	if (mask == nil || mask.X509SvidTtl) &&
 		(entry.X509SvidTtl < 0) {
-		return errors.New("invalid registration entry: X509SvidTtl is not set")
+		return kvError.New("invalid registration entry: X509SvidTtl is not set")
 	}
 
 	if (mask == nil || mask.JwtSvidTtl) &&
 		(entry.JwtSvidTtl < 0) {
-		return errors.New("invalid registration entry: JwtSvidTtl is not set")
+		return kvError.New("invalid registration entry: JwtSvidTtl is not set")
 	}
 
 	return nil
@@ -402,17 +429,14 @@ func (c *entryIndex) List(req *listRegistrationEntries) (record.Iterator[entryOb
 	if req.ByParentID != "" {
 		filters = append(filters, c.parentID.EqualTo(cursor, req.ByParentID))
 	}
-	if req.BySpiffeID != "" {
-		filters = append(filters, c.spiffeID.EqualTo(cursor, req.BySpiffeID))
-	}
 	if req.BySelectors != nil {
 		filters = append(filters, c.selectors.Matching(cursor, req.BySelectors.Selectors, matchBehavior(req.BySelectors.Match)))
 	}
+	if req.BySpiffeID != "" {
+		filters = append(filters, c.spiffeID.EqualTo(cursor, req.BySpiffeID))
+	}
 	if req.ByFederatesWith != nil {
 		filters = append(filters, c.federatesWith.Matching(cursor, req.ByFederatesWith.TrustDomains, matchBehavior(req.ByFederatesWith.Match)))
-	}
-	if !req.ByExpiresBefore.IsZero() {
-		filters = append(filters, c.expiresAt.LessThan(cursor, req.ByExpiresBefore.Unix()))
 	}
 	if req.ByHint != "" {
 		filters = append(filters, c.hint.EqualTo(cursor, req.ByHint))
@@ -420,7 +444,11 @@ func (c *entryIndex) List(req *listRegistrationEntries) (record.Iterator[entryOb
 	if req.ByDownstream != nil {
 		filters = append(filters, c.downstream.EqualTo(cursor, *req.ByDownstream))
 	}
-
+	
+	if !req.ByExpiresBefore.IsZero() {
+		filters = append(filters, c.expiresAt.LessThan(cursor, req.ByExpiresBefore.Unix()))
+	}
+	
 	var iter record.Iterator[entryObject]
 	if len(filters) > 0 {
 		iter = record.And(filters)

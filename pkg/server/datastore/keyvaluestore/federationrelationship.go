@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
@@ -25,7 +26,8 @@ func (ds *DataStore) CreateFederationRelationship(ctx context.Context, in *datas
 
 	if in.TrustDomainBundle != nil {
 		if _, err := ds.SetBundle(ctx, in.TrustDomainBundle); err != nil {
-			ds.log.WithError(err).Warn("unable to set bundle")
+			//ds.log.WithError(err).Warn("unable to set bundle")
+			return nil, fmt.Errorf("unable to set bundle: %w", err)
 		}
 	}
 
@@ -36,7 +38,7 @@ func (ds *DataStore) FetchFederationRelationship(ctx context.Context, td spiffei
 	if td.IsZero() {
 		return nil, status.Error(codes.InvalidArgument, "trust domain is required")
 	}
-	out, err := ds.federationRelationships.Get(td.String())
+	out, err := ds.federationRelationships.Get(td.Name())
 	switch {
 	case err == nil:
 		return ds.makeFederationRelationship(out.Object.FederationRelationship), nil
@@ -66,50 +68,52 @@ func (ds *DataStore) DeleteFederationRelationship(ctx context.Context, td spiffe
 	if td.IsZero() {
 		return status.Error(codes.InvalidArgument, "trust domain is required")
 	}
-	if err := ds.federationRelationships.Delete(ctx, td.String()); err != nil {
+
+	if err := ds.federationRelationships.Delete(ctx, td.Name()); err != nil {
 		return dsErr(err, "failed to delete federation relationship")
 	}
 	return nil
 }
 
-func (ds *DataStore) UpdateFederationRelationship(ctx context.Context, update *datastore.FederationRelationship, mask *types.FederationRelationshipMask) (*datastore.FederationRelationship, error) {
-	if err := validateFederationRelationship(update, mask); err != nil {
+func (ds *DataStore) UpdateFederationRelationship(ctx context.Context, fr *datastore.FederationRelationship, mask *types.FederationRelationshipMask) (*datastore.FederationRelationship, error) {
+	if err := validateFederationRelationship(fr, mask); err != nil {
 		return nil, err
 	}
-	existing, err := ds.federationRelationships.Get(update.TrustDomain.String())
+	existing, err := ds.federationRelationships.Get(fr.TrustDomain.Name())
 	if err != nil {
 		return nil, dsErr(err, "unable to fetch federation relationship")
 	}
 
 	updated := existing.Object
 
-	if mask == nil {
-		mask = protoutil.AllTrueFederationRelationshipMask
-	}
+	// SQL dont verify if mask is equal nil
+	/*
+		if mask == nil {
+			mask = protoutil.AllTrueFederationRelationshipMask
+		} */
+
 	if mask.BundleEndpointUrl {
-		updated.FederationRelationship.BundleEndpointURL = update.BundleEndpointURL
+		updated.FederationRelationship.BundleEndpointURL = fr.BundleEndpointURL
 	}
 	if mask.BundleEndpointProfile {
-		updated.FederationRelationship.BundleEndpointProfile = update.BundleEndpointProfile
-		if update.BundleEndpointProfile == datastore.BundleEndpointSPIFFE {
-			updated.FederationRelationship.EndpointSPIFFEID = update.EndpointSPIFFEID
+		updated.FederationRelationship.BundleEndpointProfile = fr.BundleEndpointProfile
+		if fr.BundleEndpointProfile == datastore.BundleEndpointSPIFFE {
+			updated.FederationRelationship.EndpointSPIFFEID = fr.EndpointSPIFFEID
 		}
 	}
-	if mask.TrustDomainBundle {
-		updated.FederationRelationship.TrustDomainBundle = update.TrustDomainBundle
+
+	if mask.TrustDomainBundle && fr.TrustDomainBundle != nil {
+		if _, err := ds.SetBundle(ctx, fr.TrustDomainBundle); err != nil {
+			//ds.log.WithError(err).Warn("unable to set bundle")
+			return nil, fmt.Errorf("unable to set bundle: %w", err)
+		}
 	}
 
 	if err := ds.federationRelationships.Update(ctx, updated, existing.Metadata.Revision); err != nil {
 		return nil, dsErr(err, "failed to update federation relationship")
 	}
 
-	if mask.TrustDomainBundle && update.TrustDomainBundle != nil {
-		if _, err := ds.SetBundle(ctx, update.TrustDomainBundle); err != nil {
-			ds.log.WithError(err).Warn("unable to set bundle")
-		}
-	}
-
-	updated.FederationRelationship.TrustDomainBundle, err = ds.FetchBundle(ctx, update.TrustDomain.IDString())
+	updated.FederationRelationship.TrustDomainBundle, err = ds.FetchBundle(ctx, fr.TrustDomain.IDString())
 	if err != nil {
 		return nil, dsErr(err, "failed to fetch bundle for federation relationship")
 	}
@@ -119,7 +123,7 @@ func (ds *DataStore) UpdateFederationRelationship(ctx context.Context, update *d
 
 func (ds *DataStore) makeFederationRelationship(in *datastore.FederationRelationship) *datastore.FederationRelationship {
 	fr := *in
-	if bundleRecord, err := ds.bundles.Get(in.TrustDomain.String()); err == nil {
+	if bundleRecord, err := ds.bundles.Get(in.TrustDomain.Name()); err == nil {
 		fr.TrustDomainBundle = bundleRecord.Object.Bundle
 	}
 	return &fr
@@ -133,7 +137,7 @@ func (o federationRelationshipObject) Key() string {
 	if o.FederationRelationship == nil {
 		return ""
 	}
-	return o.FederationRelationship.TrustDomain.String()
+	return o.FederationRelationship.TrustDomain.Name()
 }
 
 type federationRelationshipData struct {
@@ -147,7 +151,7 @@ type federationRelationshipCodec struct{}
 
 func (federationRelationshipCodec) Marshal(o *federationRelationshipObject) (string, []byte, error) {
 	data, err := json.Marshal(&federationRelationshipData{
-		TrustDomain:           o.FederationRelationship.TrustDomain.String(),
+		TrustDomain:           o.FederationRelationship.TrustDomain.Name(),
 		BundleEndpointURL:     o.FederationRelationship.BundleEndpointURL.String(),
 		BundleEndpointProfile: string(o.FederationRelationship.BundleEndpointProfile),
 		EndpointSPIFFEID:      o.FederationRelationship.EndpointSPIFFEID.String(),

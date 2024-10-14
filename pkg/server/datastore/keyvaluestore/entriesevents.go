@@ -85,9 +85,9 @@ func (ds *DataStore) createRegistrationEntryEvent(ctx context.Context, event *da
 }
 
 func (ds *DataStore) DeleteRegistrationEntryEventForTesting(ctx context.Context, eventID uint) error {
-	return ds.deleteRegistrationEntryEventForTesting(ctx, eventID)
+	return ds.deleteRegistrationEntryEvent(ctx, eventID)
 }
-func (ds *DataStore) deleteRegistrationEntryEventForTesting(ctx context.Context, eventID uint) error {
+func (ds *DataStore) deleteRegistrationEntryEvent(ctx context.Context, eventID uint) error {
 	if err := ds.entriesEvents.Delete(ctx, entryEventContentKey(eventID)); err != nil {
 		return dsErr(err, "failed to delete entry event")
 	}

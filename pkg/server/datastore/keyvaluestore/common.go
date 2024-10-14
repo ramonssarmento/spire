@@ -66,7 +66,7 @@ func getPaginationParams(p *datastore.Pagination) (string, int, error) {
 }
 
 func dsErr(err error, format string, args ...interface{}) error {
-	code := codes.Unknown
+	code := codes.Internal
 	switch {
 	case errors.Is(err, record.ErrNotFound):
 		code = codes.NotFound

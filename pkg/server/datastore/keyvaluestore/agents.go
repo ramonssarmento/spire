@@ -35,6 +35,10 @@ func (ds *DataStore) CountAttestedNodes(ctx context.Context, req *datastore.Coun
 }
 
 func (ds *DataStore) CreateAttestedNode(ctx context.Context, in *common.AttestedNode) (*common.AttestedNode, error) {
+	if in == nil {
+		return nil, kvError.New("invalid request: missing attested node")
+	}
+
 	if err := ds.agents.Create(ctx, agentObject{AttestedNode: in}); err != nil {
 		return nil, dsErr(err, "failed to create agent")
 	}
@@ -248,6 +252,10 @@ func (idx *agentIndex) List(req *listAttestedNodes) (record.Iterator[agentObject
 	cursor, limit, err := getPaginationParams(req.Pagination)
 	if err != nil {
 		return nil, err
+	}
+
+	if req.BySelectorMatch != nil && len(req.BySelectorMatch.Selectors) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "cannot list by empty selectors set")
 	}
 
 	var filters []record.Iterator[agentObject]

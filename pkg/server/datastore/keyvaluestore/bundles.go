@@ -14,7 +14,10 @@ import (
 )
 
 func (ds *DataStore) AppendBundle(ctx context.Context, appends *common.Bundle) (*common.Bundle, error) {
-	// TODO: validation
+	if appends == nil {
+		return nil, kvError.New("missing bundle in request")
+	}
+
 	existing, err := ds.bundles.Get(appends.TrustDomainId)
 	switch {
 	case err == nil:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"unicode"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spiffe/spire/pkg/server/datastore"
@@ -12,10 +13,25 @@ import (
 	"github.com/spiffe/spire/pkg/server/datastore/keyvaluestore/internal/record"
 
 	"github.com/hashicorp/hcl"
+	"github.com/zeebo/errs"
 )
 
 const (
 	PluginName = "keyvalue"
+)
+
+var (
+	kvError           = errs.Class("datastore-keyvalue")
+	validEntryIDChars = &unicode.RangeTable{
+		R16: []unicode.Range16{
+			{0x002d, 0x002e, 1}, // - | .
+			{0x0030, 0x0039, 1}, // [0-9]
+			{0x0041, 0x005a, 1}, // [A-Z]
+			{0x005f, 0x005f, 1}, // _
+			{0x0061, 0x007a, 1}, // [a-z]
+		},
+		LatinOffset: 5,
+	}
 )
 
 type Configuration struct {

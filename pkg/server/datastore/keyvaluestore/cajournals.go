@@ -46,14 +46,17 @@ func (ds *DataStore) PruneCAJournals(ctx context.Context, allAuthoritiesExpireBe
 
 	// TO-DO
 	// In future we could store expiration date on Index
-	records, _, _ := ds.caJournal.List(0)
+	records, _, err := ds.caJournal.List(0)
+	if err != nil {
+		return dsErr(err, "failed to delete CA journal")
+	}
 
 checkAuthorities:
 	for _, record := range records {
 		model := record.Object.CAJournal
 
 		entries := new(journal.Entries)
-		if err := proto.Unmarshal(model.Data, entries); err != nil {
+		if err = proto.Unmarshal(model.Data, entries); err != nil {
 			return status.Errorf(codes.Internal, "unable to unmarshal entries from CA journal record: %v", err)
 		}
 
