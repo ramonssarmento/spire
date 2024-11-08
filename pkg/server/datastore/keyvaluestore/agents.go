@@ -169,7 +169,7 @@ func (ds *DataStore) ListNodeSelectors(ctx context.Context, req *datastore.ListN
 }
 
 func (ds *DataStore) SetNodeSelectors(ctx context.Context, spiffeID string, selectors []*common.Selector) error {
-	agent, err := ds.FetchAttestedNode(ctx, spiffeID)
+	agent, err := ds.agents.Get(spiffeID)
 	switch {
 	case err != nil:
 		return err
@@ -177,7 +177,18 @@ func (ds *DataStore) SetNodeSelectors(ctx context.Context, spiffeID string, sele
 		_, err = ds.CreateAttestedNode(ctx, &common.AttestedNode{SpiffeId: spiffeID, Selectors: selectors})
 		return err
 	default:
-		_, err = ds.UpdateAttestedNode(ctx, &common.AttestedNode{SpiffeId: spiffeID, Selectors: selectors}, &common.AttestedNodeMask{})
+		existing := agent.Object
+		existing.Selectors = selectors
+
+		if err := ds.agents.Update(ctx, existing, agent.Metadata.Revision); err != nil {
+			return dsErr(err, "failed to update agent")
+		}
+
+		if err = ds.createAttestedNodeEvent(ctx, &datastore.AttestedNodeEvent{
+			SpiffeID: spiffeID,
+		}); err != nil {
+			return err
+		}
 		return err
 	}
 }
