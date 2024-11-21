@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -87,6 +88,10 @@ func buildCreateTableInput(tableName string) *dynamodb.CreateTableInput {
 				AttributeType: types.ScalarAttributeTypeS,
 			},
 			{
+				AttributeName: aws.String("ID"),
+				AttributeType: types.ScalarAttributeTypeS,
+			},
+			{
 				AttributeName: aws.String("Kind"),
 				AttributeType: types.ScalarAttributeTypeS,
 			},
@@ -99,6 +104,24 @@ func buildCreateTableInput(tableName string) *dynamodb.CreateTableInput {
 			{
 				AttributeName: aws.String("Key"),
 				KeyType:       types.KeyTypeRange,
+			},
+		},
+		LocalSecondaryIndexes: []types.LocalSecondaryIndex{
+			{
+				IndexName: aws.String("ById"),
+				KeySchema: []types.KeySchemaElement{
+					{
+						AttributeName: aws.String("Kind"),
+						KeyType:       types.KeyTypeHash,
+					},
+					{
+						AttributeName: aws.String("ID"),
+						KeyType:       types.KeyTypeRange,
+					},
+				},
+				Projection: &types.Projection{
+					ProjectionType: types.ProjectionTypeAll,
+				},
 			},
 		},
 		TableName:   aws.String(tableName),
@@ -224,11 +247,18 @@ func (s *Store) Create(ctx context.Context, kind string, key string, object inte
 
 	now := s.now().UTC()
 
+	uniqId, err := s.idCounter(ctx, kind)
+
+	if err != nil {
+		return err
+	}
+
 	record := keyvalue.Record{
 		Metadata: keyvalue.Metadata{
 			CreatedAt: now,
 			UpdatedAt: now,
 			Revision:  1,
+			ID:        uniqId,
 		},
 		Object:    object,
 		ByteValue: byteValue,
@@ -437,12 +467,60 @@ func (s *Store) AtomicCounter(ctx context.Context, kind string) (uint, error) {
 
 }
 
+func (s *Store) idCounter(ctx context.Context, kind string) (string, error) {
+	//fmt.Printf("Dynamo AtomicCounter %s\n", kind)
+
+	// The "kind" will be used as key to the counter
+	tableKey := map[string]types.AttributeValue{
+		"Key":  &types.AttributeValueMemberS{Value: kind},
+		"Kind": &types.AttributeValueMemberS{Value: "idCounter"},
+	}
+
+	updateExpr := expression.Add(expression.Name("Count"), expression.Value(1))
+
+	expr, err := expression.NewBuilder().WithUpdate(updateExpr).Build()
+
+	if err != nil {
+		//fmt.Printf("Couldn't build expression for update. Here's why: %v\n", err)
+		return "", err
+	}
+
+	response, err := s.awsTable.DynamoDbClient.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 s.awsTable.TableName,
+		Key:                       tableKey,
+		ExpressionAttributeNames:  expr.Names(),
+		ExpressionAttributeValues: expr.Values(),
+		UpdateExpression:          expr.Update(),
+		ReturnValues:              types.ReturnValueUpdatedNew,
+	})
+
+	if err != nil {
+		//fmt.Printf("Couldn't update AtomicCounter %s. Here's why: %v\n", kind, err)
+		return "", err
+	}
+
+	var newValue uint
+	err = attributevalue.Unmarshal(response.Attributes["Count"], &newValue)
+	if err != nil {
+		//fmt.Printf("Couldn't unmarshal AtomicCounter. Here's why: %v\n", err)
+		return "", err
+	}
+
+	return strconv.FormatUint(uint64(newValue), 10), nil
+
+}
+
 func (s *Store) List(ctx context.Context, kind string, listObject *keyvalue.ListObject) ([]keyvalue.Record, string, error) {
 	var results []keyvalue.Record
 	var projection []string //TO-DO
 	var nextCursor string
 
 	keyCondition := expression.Key("Kind").Equal(expression.Value(kind))
+
+	if listObject != nil && listObject.Cursor != "" {
+		keyCondition = keyCondition.And(expression.Key("ID").GreaterThan(expression.Value(listObject.Cursor)))
+	}
+
 	filterExpression := expression.ConditionBuilder{}
 
 	for idx, filter := range listObject.Filters {
@@ -529,17 +607,11 @@ func (s *Store) List(ctx context.Context, kind string, listObject *keyvalue.List
 		ExpressionAttributeValues: expr.Values(),
 		KeyConditionExpression:    expr.KeyCondition(),
 		ProjectionExpression:      expr.Projection(),
+		IndexName:                 aws.String("ById"),
 	}
 
 	if len(listObject.Filters) != 0 {
 		input.FilterExpression = expr.Filter()
-	}
-
-	if listObject != nil && listObject.Cursor != "" {
-		input.ExclusiveStartKey = map[string]types.AttributeValue{
-			"Kind": &types.AttributeValueMemberS{Value: kind},
-			"Key":  &types.AttributeValueMemberS{Value: listObject.Cursor},
-		}
 	}
 
 	var limit int
@@ -564,12 +636,13 @@ func (s *Store) List(ctx context.Context, kind string, listObject *keyvalue.List
 		}
 
 		results = append(results, pageResults...)
+	}
 
-		if page.LastEvaluatedKey != nil {
-			nextCursor = page.LastEvaluatedKey["Key"].(*types.AttributeValueMemberS).Value
-		} else {
-			nextCursor = ""
+	if listObject.Limit > 0 && len(results) != 0 {
+		if len(results) > listObject.Limit {
+			results = results[:listObject.Limit]
 		}
+		nextCursor = results[len(results)-1].ID
 	}
 
 	return results, nextCursor, nil

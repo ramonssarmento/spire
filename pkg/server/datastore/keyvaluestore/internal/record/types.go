@@ -13,6 +13,7 @@ type Metadata struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	Revision  int64
+	ID        string
 }
 
 type Record[O any] struct {

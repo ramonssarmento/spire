@@ -2,6 +2,7 @@ package keyvaluestore
 
 import (
 	"errors"
+	"strconv"
 
 	"github.com/spiffe/spire/pkg/server/datastore"
 	"github.com/spiffe/spire/pkg/server/datastore/keyvaluestore/internal/keyvalue"
@@ -63,7 +64,18 @@ func getPaginationParams(p *datastore.Pagination) (string, int, error) {
 	case p.PageSize == 0:
 		return "", 0, status.Error(codes.InvalidArgument, "cannot paginate with pagesize = 0")
 	}
-	return p.Token, int(p.PageSize), nil
+	cursor := p.Token
+
+	if p.Token != "" {
+		token, err := strconv.ParseUint(p.Token, 10, 32)
+		if err != nil {
+			return "", 0, status.Errorf(codes.InvalidArgument, "could not parse token '%v'", p.Token)
+		}
+		if token == 0 {
+			cursor = ""
+		}
+	}
+	return cursor, int(p.PageSize), nil
 }
 
 func dsErr(err error, format string, args ...interface{}) error {
