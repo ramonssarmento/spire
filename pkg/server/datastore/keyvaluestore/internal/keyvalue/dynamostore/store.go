@@ -89,7 +89,7 @@ func buildCreateTableInput(tableName string) *dynamodb.CreateTableInput {
 			},
 			{
 				AttributeName: aws.String("ID"),
-				AttributeType: types.ScalarAttributeTypeS,
+				AttributeType: types.ScalarAttributeTypeN,
 			},
 			{
 				AttributeName: aws.String("Kind"),
@@ -467,7 +467,7 @@ func (s *Store) AtomicCounter(ctx context.Context, kind string) (uint, error) {
 
 }
 
-func (s *Store) idCounter(ctx context.Context, kind string) (string, error) {
+func (s *Store) idCounter(ctx context.Context, kind string) (uint, error) {
 	//fmt.Printf("Dynamo AtomicCounter %s\n", kind)
 
 	// The "kind" will be used as key to the counter
@@ -482,7 +482,7 @@ func (s *Store) idCounter(ctx context.Context, kind string) (string, error) {
 
 	if err != nil {
 		//fmt.Printf("Couldn't build expression for update. Here's why: %v\n", err)
-		return "", err
+		return 0, err
 	}
 
 	response, err := s.awsTable.DynamoDbClient.UpdateItem(ctx, &dynamodb.UpdateItemInput{
@@ -496,17 +496,17 @@ func (s *Store) idCounter(ctx context.Context, kind string) (string, error) {
 
 	if err != nil {
 		//fmt.Printf("Couldn't update AtomicCounter %s. Here's why: %v\n", kind, err)
-		return "", err
+		return 0, err
 	}
 
 	var newValue uint
 	err = attributevalue.Unmarshal(response.Attributes["Count"], &newValue)
 	if err != nil {
 		//fmt.Printf("Couldn't unmarshal AtomicCounter. Here's why: %v\n", err)
-		return "", err
+		return 0, err
 	}
 
-	return strconv.FormatUint(uint64(newValue), 10), nil
+	return newValue, nil
 
 }
 
@@ -518,7 +518,13 @@ func (s *Store) List(ctx context.Context, kind string, listObject *keyvalue.List
 	keyCondition := expression.Key("Kind").Equal(expression.Value(kind))
 
 	if listObject != nil && listObject.Cursor != "" {
-		keyCondition = keyCondition.And(expression.Key("ID").GreaterThan(expression.Value(listObject.Cursor)))
+		cursor, err := strconv.ParseUint(listObject.Cursor, 10, 32)
+
+		if err != nil {
+			return nil, "", fmt.Errorf("could not parse token '%v'", listObject.Cursor)
+		}
+
+		keyCondition = keyCondition.And(expression.Key("ID").GreaterThan(expression.Value(cursor)))
 	}
 
 	filterExpression := expression.ConditionBuilder{}
@@ -598,7 +604,7 @@ func (s *Store) List(ctx context.Context, kind string, listObject *keyvalue.List
 
 	expr, err := builder.Build()
 	if err != nil {
-		return nil, "", fmt.Errorf("error when building expression: %w", err)
+		return nil, "", fmt.Errorf("rror when building expression: %w", err)
 	}
 
 	input := &dynamodb.QueryInput{
@@ -642,7 +648,8 @@ func (s *Store) List(ctx context.Context, kind string, listObject *keyvalue.List
 		if len(results) > listObject.Limit {
 			results = results[:listObject.Limit]
 		}
-		nextCursor = results[len(results)-1].ID
+
+		nextCursor = strconv.FormatUint(uint64(results[len(results)-1].ID), 10)
 	}
 
 	return results, nextCursor, nil
