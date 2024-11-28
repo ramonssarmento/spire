@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// CountAttestedNodes counts all attested nodes
 func (ds *DataStore) CountAttestedNodes(ctx context.Context, req *datastore.CountAttestedNodesRequest) (int32, error) {
 	listReq := &listAttestedNodes{
 		ListAttestedNodesRequest: datastore.ListAttestedNodesRequest{
@@ -31,13 +32,40 @@ func (ds *DataStore) CountAttestedNodes(ctx context.Context, req *datastore.Coun
 	return int32(len(records)), err
 }
 
+// CreateAttestedNode stores the given attested node
 func (ds *DataStore) CreateAttestedNode(ctx context.Context, in *common.AttestedNode) (*common.AttestedNode, error) {
 	if in == nil {
 		return nil, kvError.New("invalid request: missing attested node")
 	}
 
 	if err := ds.agents.Create(ctx, agentObject{Node: in, Banned: in.CertSerialNumber == "" && in.NewCertSerialNumber == ""}); err != nil {
-		return nil, dsErr(err, "failed to create agent")
+		switch {
+		case errors.Is(err, record.ErrExists):
+
+			oldAgent, err := ds.agents.Get(ctx, in.SpiffeId)
+			if err != nil {
+				return nil, dsErr(err, "failed to retrieve agent")
+			}
+
+			existing := oldAgent.Object.Node
+			emptyNode := &common.AttestedNode{SpiffeId: in.SpiffeId, Selectors: copySelectors(in.Selectors)}
+
+			// If the node only contains selectors, it was most likely created by SetNodeSelectors.
+			// That's why we update its contents.
+			if existing.String() == emptyNode.String() {
+				_, err = ds.updateAttestedNode(ctx, in, nil, oldAgent)
+
+				if err != nil {
+					return nil, dsErr(err, "failed to create agent")
+				}
+
+				return in, nil
+			} else {
+				return nil, dsErr(record.ErrExists, "failed to create agent")
+			}
+		default:
+			return nil, dsErr(err, "failed to create agent")
+		}
 	}
 
 	if err := ds.createAttestedNodeEvent(ctx, &datastore.AttestedNodeEvent{
@@ -49,6 +77,7 @@ func (ds *DataStore) CreateAttestedNode(ctx context.Context, in *common.Attested
 	return in, nil
 }
 
+// DeleteAttestedNode deletes the given attested node and the associated node selectors.
 func (ds *DataStore) DeleteAttestedNode(ctx context.Context, spiffeID string) (*common.AttestedNode, error) {
 	r, err := ds.agents.Get(ctx, spiffeID)
 
@@ -70,6 +99,7 @@ func (ds *DataStore) DeleteAttestedNode(ctx context.Context, spiffeID string) (*
 	return r.Object.Node, nil
 }
 
+// FetchAttestedNode fetches an existing attested node by SPIFFE ID
 func (ds *DataStore) FetchAttestedNode(ctx context.Context, spiffeID string) (*common.AttestedNode, error) {
 	r, err := ds.agents.Get(ctx, spiffeID)
 	switch {
@@ -82,6 +112,7 @@ func (ds *DataStore) FetchAttestedNode(ctx context.Context, spiffeID string) (*c
 	}
 }
 
+// ListAttestedNodes lists all attested nodes (pagination available)
 func (ds *DataStore) ListAttestedNodes(ctx context.Context, req *datastore.ListAttestedNodesRequest) (*datastore.ListAttestedNodesResponse, error) {
 	records, cursor, err := ds.agents.List(ctx, &listAttestedNodes{
 		ListAttestedNodesRequest: *req,
@@ -102,12 +133,18 @@ func (ds *DataStore) ListAttestedNodes(ctx context.Context, req *datastore.ListA
 	return resp, nil
 }
 
+// UpdateAttestedNode updates the given node's cert serial and expiration.
 func (ds *DataStore) UpdateAttestedNode(ctx context.Context, newAgent *common.AttestedNode, mask *common.AttestedNodeMask) (*common.AttestedNode, error) {
-	record, err := ds.agents.Get(ctx, newAgent.SpiffeId)
+	oldAgent, err := ds.agents.Get(ctx, newAgent.SpiffeId)
 	if err != nil {
 		return nil, dsErr(err, "datastore-keyvalue")
 	}
-	existing := record.Object
+
+	return ds.updateAttestedNode(ctx, newAgent, mask, oldAgent)
+}
+
+func (ds *DataStore) updateAttestedNode(ctx context.Context, newAgent *common.AttestedNode, mask *common.AttestedNodeMask, oldAgent *record.Record[agentObject]) (*common.AttestedNode, error) {
+	existing := oldAgent.Object
 
 	if mask == nil {
 		mask = protoutil.AllTrueCommonAgentMask
@@ -132,11 +169,11 @@ func (ds *DataStore) UpdateAttestedNode(ctx context.Context, newAgent *common.At
 		existing.AttestationDataType = newAgent.AttestationDataType
 	}*/
 
-	if err := ds.agents.Update(ctx, existing, record.Metadata.Revision); err != nil {
+	if err := ds.agents.Update(ctx, existing, oldAgent.Metadata.Revision); err != nil {
 		return nil, dsErr(err, "datastore-keyvalue")
 	}
 
-	if err = ds.createAttestedNodeEvent(ctx, &datastore.AttestedNodeEvent{
+	if err := ds.createAttestedNodeEvent(ctx, &datastore.AttestedNodeEvent{
 		SpiffeID: newAgent.SpiffeId,
 	}); err != nil {
 		return nil, err
@@ -145,6 +182,7 @@ func (ds *DataStore) UpdateAttestedNode(ctx context.Context, newAgent *common.At
 	return existing.Node, nil
 }
 
+// GetNodeSelectors gets node (agent) selectors by SPIFFE ID
 func (ds *DataStore) GetNodeSelectors(ctx context.Context, spiffeID string, dataConsistency datastore.DataConsistency) ([]*common.Selector, error) {
 	r, err := ds.agents.Get(ctx, spiffeID)
 	switch {
@@ -157,6 +195,7 @@ func (ds *DataStore) GetNodeSelectors(ctx context.Context, spiffeID string, data
 	}
 }
 
+// ListNodeSelectors gets node (agent) selectors by SPIFFE ID
 func (ds *DataStore) ListNodeSelectors(ctx context.Context, req *datastore.ListNodeSelectorsRequest) (*datastore.ListNodeSelectorsResponse, error) {
 	records, _, err := ds.agents.List(ctx, &listAttestedNodes{
 		ByExpiresAfter: req.ValidAt,
@@ -173,6 +212,7 @@ func (ds *DataStore) ListNodeSelectors(ctx context.Context, req *datastore.ListN
 	return resp, nil
 }
 
+// SetNodeSelectors sets node (agent) selectors by SPIFFE ID, deleting old selectors first
 func (ds *DataStore) SetNodeSelectors(ctx context.Context, spiffeID string, selectors []*common.Selector) error {
 	agent, err := ds.agents.Get(ctx, spiffeID)
 	switch {
@@ -198,7 +238,7 @@ func (ds *DataStore) SetNodeSelectors(ctx context.Context, spiffeID string, sele
 	}
 }
 
-// Helper function to copy the selectors
+// Helper function to copy the selectors with right "sizeCache" value
 func copySelectors(selectors []*common.Selector) []*common.Selector {
 	copiedSelectors := make([]*common.Selector, len(selectors))
 	for i, selector := range selectors {
