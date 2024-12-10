@@ -283,6 +283,10 @@ func (bundleCodec) Unmarshal(in []byte, out *bundleObject) error {
 	return nil
 }
 
+func (bundleCodec) ToString(in *bundleObject) (string) {
+	return "NONE"
+}
+
 type bundleIndex struct {
 }
 

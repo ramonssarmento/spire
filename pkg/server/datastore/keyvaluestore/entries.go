@@ -51,19 +51,7 @@ func (ds *DataStore) CreateOrReturnRegistrationEntry(ctx context.Context, entry 
 		return nil, false, err
 	}
 
-	records, _, err := ds.entries.List(ctx, &listRegistrationEntries{
-		ListRegistrationEntriesRequest: datastore.ListRegistrationEntriesRequest{
-			BySpiffeID: entry.SpiffeId,
-			ByParentID: entry.ParentId,
-			BySelectors: &datastore.BySelectors{
-				Match:     datastore.Exact,
-				Selectors: entry.Selectors,
-			},
-			Pagination: &datastore.Pagination{
-				PageSize: int32(1),
-			},
-		},
-	})
+	records, _, err := ds.entries.ListByObjectString(ctx, entryToString(entry))
 
 	if len(records) > 0 {
 		return records[0].Object.Entry, true, nil
@@ -80,7 +68,7 @@ func (ds *DataStore) CreateOrReturnRegistrationEntry(ctx context.Context, entry 
 	entryWithID := *entry
 	entryWithID.EntryId = entryID
 
-	if err := ds.entries.Create(ctx, entryObject{Entry: &entryWithID}); err != nil {
+	if err := ds.entries.Create(ctx, entryObject{Entry: &entryWithID,}); err != nil {
 		return nil, false, dsErr(err, "failed to create entry")
 	}
 
@@ -92,6 +80,16 @@ func (ds *DataStore) CreateOrReturnRegistrationEntry(ctx context.Context, entry 
 
 	ret, err := ds.FetchRegistrationEntry(ctx, entryID)
 	return ret, false, err
+}
+
+func entryToString(entry *common.RegistrationEntry) (string){
+	newEntry := new(common.RegistrationEntry)
+	
+	newEntry.SpiffeId = entry.SpiffeId
+	newEntry.ParentId = entry.ParentId
+	newEntry.Selectors = copySelectors(entry.Selectors)
+	
+	return newEntry.String()
 }
 
 // DeleteRegistrationEntry deletes the given registration
@@ -402,7 +400,7 @@ func validateRegistrationEntryForUpdate(entry *common.RegistrationEntry, mask *c
 }
 
 type entryObject struct {
-	Entry *common.RegistrationEntry
+	Entry  *common.RegistrationEntry
 }
 
 func (o entryObject) Key() string {
@@ -426,6 +424,16 @@ func (entryCodec) Unmarshal(in []byte, out *entryObject) error {
 	}
 	out.Entry = entry
 	return nil
+}
+
+func (entryCodec) ToString(in *entryObject) (string) {
+	newEntry := new(common.RegistrationEntry)
+
+	newEntry.SpiffeId = in.Entry.SpiffeId
+	newEntry.ParentId = in.Entry.ParentId
+	newEntry.Selectors = copySelectors(in.Entry.Selectors)
+
+	return newEntry.String()
 }
 
 type listRegistrationEntries struct {

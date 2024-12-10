@@ -100,6 +100,10 @@ func (joinTokenCodec) Unmarshal(in []byte, out *joinTokenObject) error {
 	return nil
 }
 
+func (joinTokenCodec) ToString(in *joinTokenObject) (string) {
+	return "NONE"
+}
+
 type listJoinTokens struct {
 	ByExpiresBefore time.Time
 }

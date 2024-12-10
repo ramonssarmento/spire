@@ -95,6 +95,10 @@ func buildCreateTableInput(tableName string) *dynamodb.CreateTableInput {
 				AttributeName: aws.String("Kind"),
 				AttributeType: types.ScalarAttributeTypeS,
 			},
+			{
+				AttributeName: aws.String("String"),
+				AttributeType: types.ScalarAttributeTypeS,
+			},
 		},
 		KeySchema: []types.KeySchemaElement{
 			{
@@ -116,6 +120,22 @@ func buildCreateTableInput(tableName string) *dynamodb.CreateTableInput {
 					},
 					{
 						AttributeName: aws.String("ID"),
+						KeyType:       types.KeyTypeRange,
+					},
+				},
+				Projection: &types.Projection{
+					ProjectionType: types.ProjectionTypeAll,
+				},
+			},
+			{
+				IndexName: aws.String("ByObjectString"),
+				KeySchema: []types.KeySchemaElement{
+					{
+						AttributeName: aws.String("Kind"),
+						KeyType:       types.KeyTypeHash,
+					},
+					{
+						AttributeName: aws.String("String"),
 						KeyType:       types.KeyTypeRange,
 					},
 				},
@@ -242,7 +262,7 @@ func (s *Store) Get(ctx context.Context, kind string, key string) (keyvalue.Reco
 }
 
 // Create inserts a new record into the store with the given kind, key, and object data.
-func (s *Store) Create(ctx context.Context, kind string, key string, object interface{}, byteValue []byte) error {
+func (s *Store) Create(ctx context.Context, kind string, key string, object interface{}, byteValue []byte, stringValue string) error {
 	now := s.now().UTC()
 
 	uniqId, err := s.idCounter(ctx, kind)
@@ -257,6 +277,7 @@ func (s *Store) Create(ctx context.Context, kind string, key string, object inte
 			UpdatedAt: now,
 			Revision:  1,
 			ID:        uniqId,
+			String:    stringValue,
 		},
 		Object:    object,
 		ByteValue: byteValue,
@@ -301,7 +322,7 @@ func (s *Store) Create(ctx context.Context, kind string, key string, object inte
 
 // Update modifies an existing record in the store based on kind and key,
 // with the value if the specified revision matches the one in the store.
-func (s *Store) Update(ctx context.Context, kind string, key string, value interface{}, byteValue []byte, revision int64) error {
+func (s *Store) Update(ctx context.Context, kind string, key string, value interface{}, byteValue []byte, stringValue string, revision int64) error {
 	tableKey := map[string]types.AttributeValue{
 		"Key":  &types.AttributeValueMemberS{Value: key},
 		"Kind": &types.AttributeValueMemberS{Value: kind},
@@ -309,6 +330,7 @@ func (s *Store) Update(ctx context.Context, kind string, key string, value inter
 
 	updateExpr := expression.Set(expression.Name("Object"), expression.Value(value)).
 		Set(expression.Name("ByteValue"), expression.Value(byteValue)).
+		Set(expression.Name("String"), expression.Value(stringValue)).
 		Set(expression.Name("UpdatedAt"), expression.Value(s.now().UTC())).
 		Add(expression.Name("Revision"), expression.Value(1))
 
@@ -345,7 +367,7 @@ func (s *Store) Update(ctx context.Context, kind string, key string, value inter
 
 // Replace restar an existing record in the store based on kind and key,
 // with the value if the specified revision matches the one in the store.
-func (s *Store) Replace(ctx context.Context, kind string, key string, value interface{}, byteValue []byte) error {
+func (s *Store) Replace(ctx context.Context, kind string, key string, value interface{}, byteValue []byte, stringValue string) error {
 	tableKey := map[string]types.AttributeValue{
 		"Key":  &types.AttributeValueMemberS{Value: key},
 		"Kind": &types.AttributeValueMemberS{Value: kind},
@@ -353,6 +375,7 @@ func (s *Store) Replace(ctx context.Context, kind string, key string, value inte
 
 	updateExpr := expression.Set(expression.Name("Object"), expression.Value(value)).
 		Set(expression.Name("ByteValue"), expression.Value(byteValue)).
+		Set(expression.Name("String"), expression.Value(stringValue)).
 		Set(expression.Name("UpdatedAt"), expression.Value(s.now().UTC())).
 		Add(expression.Name("Revision"), expression.Value(1))
 
@@ -710,6 +733,57 @@ func listMatchSubset[T any](field expression.NameBuilder, values []T) expression
 	backtrack(0)
 
 	return exp.And(subExp)
+}
+
+// List retrieves records from the store based on kind,
+// filters, and pagination parameters from the ListObject.
+func (s *Store) ListByObjectString(ctx context.Context, kind string, objectString string) ([]keyvalue.Record, string, error) {
+	var results []keyvalue.Record
+	var nextCursor string
+
+	keyCondition := expression.Key("Kind").Equal(expression.Value(kind))
+
+	keyCondition = keyCondition.And(expression.Key("String").Equal(expression.Value(objectString)))
+
+	builder := expression.NewBuilder().WithKeyCondition(keyCondition)
+
+	expr, err := builder.Build()
+	if err != nil {
+		return nil, "", fmt.Errorf("error when building expression: %w", err)
+	}
+
+	input := &dynamodb.QueryInput{
+		TableName:                 s.awsTable.TableName,
+		ExpressionAttributeNames:  expr.Names(),
+		ExpressionAttributeValues: expr.Values(),
+		KeyConditionExpression:    expr.KeyCondition(),
+		IndexName:                 aws.String("ByObjectString"),
+	}
+
+	limit := 1
+
+	input.Limit = new(int32)
+	*input.Limit = int32(1)
+
+	queryPaginator := dynamodb.NewQueryPaginator(s.awsTable.DynamoDbClient, input)
+
+	for queryPaginator.HasMorePages() && (limit <= 0 || len(results) < limit) {
+		page, err := queryPaginator.NextPage(ctx)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to fetch records: %w", err)
+		}
+
+		fmt.Printf("Entry found\n")
+
+		var pageResults []keyvalue.Record
+		if err := attributevalue.UnmarshalListOfMaps(page.Items, &pageResults); err != nil {
+			return nil, "", fmt.Errorf("failure to deserialize records: %w", err)
+		}
+
+		results = append(results, pageResults...)
+	}
+
+	return results, nextCursor, nil
 }
 
 func notExist() expression.Builder {

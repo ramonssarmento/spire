@@ -214,6 +214,10 @@ func (caJournalCodec) Unmarshal(in []byte, out *caJournalObject) error {
 	return nil
 }
 
+func (caJournalCodec) ToString(in *caJournalObject) (string) {
+	return "NONE"
+}
+
 type caJournalIndex struct {
 	x509AuthorityID record.UnaryIndex[string]
 }

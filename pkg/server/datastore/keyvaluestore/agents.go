@@ -270,6 +270,10 @@ func (agentCodec) Unmarshal(in []byte, out *agentObject) error {
 	return nil
 }
 
+func (agentCodec) ToString(in *agentObject) (string) {
+	return "NONE"
+}
+
 type agentObject struct {
 	Node   *common.AttestedNode
 	Banned bool

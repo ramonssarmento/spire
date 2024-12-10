@@ -239,6 +239,10 @@ func (federationRelationshipCodec) Unmarshal(in []byte, out *federationRelations
 	return nil
 }
 
+func (federationRelationshipCodec) ToString(in *federationRelationshipObject) (string) {
+	return "NONE"
+}
+
 type federationRelationshipIndex struct {
 }
 

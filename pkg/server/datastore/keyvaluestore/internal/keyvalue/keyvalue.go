@@ -42,6 +42,7 @@ type Metadata struct {
 	UpdatedAt time.Time
 	Revision  int64
 	ID        uint
+	String    string
 }
 
 type Record struct {
@@ -54,13 +55,14 @@ type Record struct {
 
 type Store interface {
 	Get(ctx context.Context, kind, key string) (Record, error)
-	Create(ctx context.Context, kind, key string, value interface{}, byteValue []byte) error
-	Update(ctx context.Context, kind, key string, value interface{}, byteValue []byte, revision int64) error
-	Replace(ctx context.Context, kind, key string, value interface{}, byteValue []byte) error
+	Create(ctx context.Context, kind, key string, value interface{}, byteValue []byte, stringValue string) error
+	Update(ctx context.Context, kind, key string, value interface{}, byteValue []byte, stringValue string, revision int64) error
+	Replace(ctx context.Context, kind, key string, value interface{}, byteValue []byte, stringValue string) error
 	Delete(ctx context.Context, kind, key string) error
 	Batch(ctx context.Context, ops []Op) error
 	AtomicCounter(ctx context.Context, kind string) (uint, error)
 	List(ctx context.Context, kind string, filters *ListObject) ([]Record, string, error)
+	ListByObjectString(ctx context.Context, kind string, objectString string) ([]Record, string, error)
 	Close() error
 }
 

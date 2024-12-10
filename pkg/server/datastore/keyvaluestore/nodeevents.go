@@ -139,6 +139,10 @@ func (nodeEventCodec) Unmarshal(in []byte, out *nodeEventObject) error {
 	return nil
 }
 
+func (nodeEventCodec) ToString(in *nodeEventObject) (string) {
+	return "NONE"
+}
+
 type nodeEventObject struct {
 	ContentKey string
 	NodeEvent  *datastore.AttestedNodeEvent

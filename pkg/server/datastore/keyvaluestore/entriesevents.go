@@ -142,6 +142,10 @@ func (entryEventCodec) Unmarshal(in []byte, out *entryEventObject) error {
 	return nil
 }
 
+func (entryEventCodec) ToString(in *entryEventObject) (string) {
+	return "NONE"
+}
+
 type entryEventObject struct {
 	ContentKey string
 	EntryEvent *datastore.RegistrationEntryEvent

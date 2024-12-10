@@ -53,7 +53,7 @@ func (c *Wrapper[C, I, O, L]) Create(ctx context.Context, o O) error {
 		return err
 	}
 
-	if err := c.store.Create(ctx, c.kind, key, o, byteValue); err != nil {
+	if err := c.store.Create(ctx, c.kind, key, o, byteValue, c.codec.ToString(&o)); err != nil {
 		return err
 	}
 	return nil
@@ -65,7 +65,7 @@ func (c *Wrapper[C, I, O, L]) Update(ctx context.Context, o O, revision int64) e
 		return err
 	}
 
-	if err := c.store.Update(ctx, c.kind, key, o, byteValue, revision); err != nil {
+	if err := c.store.Update(ctx, c.kind, key, o, byteValue, c.codec.ToString(&o), revision); err != nil {
 		return err
 	}
 	return nil
@@ -77,7 +77,7 @@ func (c *Wrapper[C, I, O, L]) Replace(ctx context.Context, o O) error {
 		return err
 	}
 
-	if err := c.store.Replace(ctx, c.kind, key, o, byteValue); err != nil {
+	if err := c.store.Replace(ctx, c.kind, key, o, byteValue, c.codec.ToString(&o)); err != nil {
 		return err
 	}
 
@@ -98,6 +98,29 @@ func (c *Wrapper[C, I, O, L]) List(ctx context.Context, opts L) ([]*Record[O], s
 	}
 
 	kvRecords, nextCursor, err := c.store.List(ctx, c.kind, filters)
+
+	if err != nil {
+		return nil, "", err
+	}
+
+	var rs []*Record[O]
+	for _, kv := range kvRecords {
+		r := &Record[O]{
+			Metadata: Metadata(kv.Metadata),
+		}
+
+		if err := c.codec.Unmarshal(kv.ByteValue, &r.Object); err != nil {
+			return nil, "", err
+		}
+		c.index.Get(r)
+		rs = append(rs, r)
+	}
+
+	return rs, nextCursor, nil
+}
+
+func (c *Wrapper[C, I, O, L]) ListByObjectString(ctx context.Context, objectString string) ([]*Record[O], string, error) {
+	kvRecords, nextCursor, err := c.store.ListByObjectString(ctx, c.kind, objectString)
 
 	if err != nil {
 		return nil, "", err

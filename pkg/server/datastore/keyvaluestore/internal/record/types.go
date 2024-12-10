@@ -14,6 +14,7 @@ type Metadata struct {
 	UpdatedAt time.Time
 	Revision  int64
 	ID        uint
+	String    string
 }
 
 type Record[O any] struct {
@@ -30,4 +31,5 @@ type Index[O Object, L any] interface {
 type Codec[O any] interface {
 	Marshal(o *O) (string, []byte, error)
 	Unmarshal(in []byte, out *O) error
+	ToString(o *O) (string)
 }
