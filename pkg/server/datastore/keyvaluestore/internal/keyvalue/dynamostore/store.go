@@ -534,7 +534,7 @@ func (s *Store) List(ctx context.Context, kind string, listObject *keyvalue.List
 	var projection []string //TODO
 	var nextCursor string
 
-	fmt.Printf("LIST %s %s %d %+v\n", kind, listObject.Cursor, listObject.Limit, listObject.Filters)
+	//fmt.Printf("LIST %s %s %d %+v\n", kind, listObject.Cursor, listObject.Limit, listObject.Filters)
 	keyCondition := expression.Key("Kind").Equal(expression.Value(kind))
 
 	if listObject != nil && listObject.Cursor != "" {
