@@ -214,7 +214,7 @@ func (caJournalCodec) Unmarshal(in []byte, out *caJournalObject) error {
 	return nil
 }
 
-func (caJournalCodec) ToString(in *caJournalObject) (string) {
+func (caJournalCodec) ToString(in *caJournalObject) string {
 	return "NONE"
 }
 

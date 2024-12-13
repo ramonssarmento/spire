@@ -31,5 +31,5 @@ type Index[O Object, L any] interface {
 type Codec[O any] interface {
 	Marshal(o *O) (string, []byte, error)
 	Unmarshal(in []byte, out *O) error
-	ToString(o *O) (string)
+	ToString(o *O) string
 }

@@ -270,7 +270,7 @@ func (agentCodec) Unmarshal(in []byte, out *agentObject) error {
 	return nil
 }
 
-func (agentCodec) ToString(in *agentObject) (string) {
+func (agentCodec) ToString(in *agentObject) string {
 	return "NONE"
 }
 

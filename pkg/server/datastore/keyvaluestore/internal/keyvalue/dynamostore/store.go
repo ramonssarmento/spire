@@ -534,6 +534,7 @@ func (s *Store) List(ctx context.Context, kind string, listObject *keyvalue.List
 	var projection []string //TODO
 	var nextCursor string
 
+	fmt.Printf("LIST %s %s %d %+v\n", kind, listObject.Cursor, listObject.Limit, listObject.Filters)
 	keyCondition := expression.Key("Kind").Equal(expression.Value(kind))
 
 	if listObject != nil && listObject.Cursor != "" {
@@ -544,68 +545,7 @@ func (s *Store) List(ctx context.Context, kind string, listObject *keyvalue.List
 		}
 
 		keyCondition = keyCondition.And(expression.Key("ID").GreaterThan(expression.Value(cursor)))
-	}
-
-	filterExpression := expression.ConditionBuilder{}
-
-	for idx, filter := range listObject.Filters {
-		field := expression.Name(filter.Name)
-		var exp expression.ConditionBuilder
-
-		switch filter.Op {
-		case keyvalue.EqualTo:
-			exp = field.Equal(expression.Value(filter.Value))
-		case keyvalue.LessThan:
-			exp = field.LessThan(expression.Value(filter.Value))
-		case keyvalue.GreaterThan:
-			exp = field.GreaterThan(expression.Value(filter.Value))
-
-		case keyvalue.MatchAny:
-			switch values := filter.Value.(type) {
-			case []*common.Selector:
-				exp = listMatchAny[*common.Selector](field, values)
-			case []string:
-				exp = listMatchAny[string](field, values)
-			default:
-				return nil, "", fmt.Errorf("unknown value type for filter")
-			}
-		case keyvalue.MatchExact:
-			switch values := filter.Value.(type) {
-			case []*common.Selector:
-				exp = listMatchExact[*common.Selector](field, values)
-			case []string:
-				exp = listMatchExact[string](field, values)
-			default:
-				return nil, "", fmt.Errorf("unknown value type for filter")
-			}
-		case keyvalue.MatchSuperset:
-			switch values := filter.Value.(type) {
-			case []*common.Selector:
-				exp = listMatchSuperset[*common.Selector](field, values)
-			case []string:
-				exp = listMatchSuperset[string](field, values)
-			default:
-				return nil, "", fmt.Errorf("unknown value type for filter")
-			}
-		case keyvalue.MatchSubset:
-			switch values := filter.Value.(type) {
-			case []*common.Selector:
-				exp = listMatchSubset[*common.Selector](field, values)
-			case []string:
-				exp = listMatchSubset[string](field, values)
-			default:
-				return nil, "", fmt.Errorf("unknown value type for filter")
-			}
-		default:
-			return nil, "", fmt.Errorf("unknown value type for filter")
-		}
-
-		if idx == 0 {
-			filterExpression = exp
-		} else {
-			filterExpression = filterExpression.And(exp)
-		}
-	}
+	}	
 
 	builder := expression.NewBuilder().WithKeyCondition(keyCondition)
 
@@ -618,6 +558,12 @@ func (s *Store) List(ctx context.Context, kind string, listObject *keyvalue.List
 	}
 
 	if len(listObject.Filters) != 0 {
+		filterExpression, err := createDynamoFilters(listObject.Filters)
+
+		if err != nil {
+			return nil, "", err
+		}
+
 		builder = builder.WithFilter(filterExpression)
 	}
 
@@ -672,6 +618,71 @@ func (s *Store) List(ctx context.Context, kind string, listObject *keyvalue.List
 	}
 
 	return results, nextCursor, nil
+}
+
+func createDynamoFilters(filters []keyvalue.ListOp) (expression.ConditionBuilder, error){
+	filterExpression := expression.ConditionBuilder{}
+
+	for idx, filter := range filters {
+		field := expression.Name(filter.Name)
+		var exp expression.ConditionBuilder
+
+		switch filter.Op {
+		case keyvalue.EqualTo:
+			exp = field.Equal(expression.Value(filter.Value))
+		case keyvalue.LessThan:
+			exp = field.LessThan(expression.Value(filter.Value))
+		case keyvalue.GreaterThan:
+			exp = field.GreaterThan(expression.Value(filter.Value))
+
+		case keyvalue.MatchAny:
+			switch values := filter.Value.(type) {
+			case []*common.Selector:
+				exp = listMatchAny[*common.Selector](field, values)
+			case []string:
+				exp = listMatchAny[string](field, values)
+			default:
+				return expression.ConditionBuilder{}, fmt.Errorf("unknown value type for filter")
+			}
+		case keyvalue.MatchExact:
+			switch values := filter.Value.(type) {
+			case []*common.Selector:
+				exp = listMatchExact[*common.Selector](field, values)
+			case []string:
+				exp = listMatchExact[string](field, values)
+			default:
+				return expression.ConditionBuilder{}, fmt.Errorf("unknown value type for filter")
+			}
+		case keyvalue.MatchSuperset:
+			switch values := filter.Value.(type) {
+			case []*common.Selector:
+				exp = listMatchSuperset[*common.Selector](field, values)
+			case []string:
+				exp = listMatchSuperset[string](field, values)
+			default:
+				return expression.ConditionBuilder{}, fmt.Errorf("unknown value type for filter")
+			}
+		case keyvalue.MatchSubset:
+			switch values := filter.Value.(type) {
+			case []*common.Selector:
+				exp = listMatchSubset[*common.Selector](field, values)
+			case []string:
+				exp = listMatchSubset[string](field, values)
+			default:
+				return expression.ConditionBuilder{}, fmt.Errorf("unknown value type for filter")
+			}
+		default:
+			return expression.ConditionBuilder{}, fmt.Errorf("unknown value type for filter")
+		}
+
+		if idx == 0 {
+			filterExpression = exp
+		} else {
+			filterExpression = filterExpression.And(exp)
+		}
+	}
+
+	return filterExpression, nil
 }
 
 func listMatchAny[T any](field expression.NameBuilder, values []T) expression.ConditionBuilder {
@@ -772,8 +783,6 @@ func (s *Store) ListByObjectString(ctx context.Context, kind string, objectStrin
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to fetch records: %w", err)
 		}
-
-		fmt.Printf("Entry found\n")
 
 		var pageResults []keyvalue.Record
 		if err := attributevalue.UnmarshalListOfMaps(page.Items, &pageResults); err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 	"unicode"
 
@@ -68,7 +69,7 @@ func (ds *DataStore) CreateOrReturnRegistrationEntry(ctx context.Context, entry 
 	entryWithID := *entry
 	entryWithID.EntryId = entryID
 
-	if err := ds.entries.Create(ctx, entryObject{Entry: &entryWithID,}); err != nil {
+	if err := ds.entries.Create(ctx, entryObject{Entry: &entryWithID}); err != nil {
 		return nil, false, dsErr(err, "failed to create entry")
 	}
 
@@ -82,13 +83,17 @@ func (ds *DataStore) CreateOrReturnRegistrationEntry(ctx context.Context, entry 
 	return ret, false, err
 }
 
-func entryToString(entry *common.RegistrationEntry) (string){
+func entryToString(entry *common.RegistrationEntry) string {
 	newEntry := new(common.RegistrationEntry)
-	
+
 	newEntry.SpiffeId = entry.SpiffeId
 	newEntry.ParentId = entry.ParentId
 	newEntry.Selectors = copySelectors(entry.Selectors)
-	
+
+	sort.SliceStable(newEntry.Selectors, func(i, j int) bool {
+		return newEntry.Selectors[i].String() < newEntry.Selectors[j].String()
+	})
+
 	return newEntry.String()
 }
 
@@ -400,7 +405,7 @@ func validateRegistrationEntryForUpdate(entry *common.RegistrationEntry, mask *c
 }
 
 type entryObject struct {
-	Entry  *common.RegistrationEntry
+	Entry *common.RegistrationEntry
 }
 
 func (o entryObject) Key() string {
@@ -426,14 +431,14 @@ func (entryCodec) Unmarshal(in []byte, out *entryObject) error {
 	return nil
 }
 
-func (entryCodec) ToString(in *entryObject) (string) {
-	newEntry := new(common.RegistrationEntry)
+func (entryCodec) ToString(in *entryObject) string {
+	/*newEntry := new(common.RegistrationEntry)
 
 	newEntry.SpiffeId = in.Entry.SpiffeId
 	newEntry.ParentId = in.Entry.ParentId
-	newEntry.Selectors = copySelectors(in.Entry.Selectors)
+	newEntry.Selectors = copySelectors(in.Entry.Selectors)*/
 
-	return newEntry.String()
+	return entryToString(in.Entry)
 }
 
 type listRegistrationEntries struct {

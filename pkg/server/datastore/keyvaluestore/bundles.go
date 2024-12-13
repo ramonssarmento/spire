@@ -283,7 +283,7 @@ func (bundleCodec) Unmarshal(in []byte, out *bundleObject) error {
 	return nil
 }
 
-func (bundleCodec) ToString(in *bundleObject) (string) {
+func (bundleCodec) ToString(in *bundleObject) string {
 	return "NONE"
 }
 

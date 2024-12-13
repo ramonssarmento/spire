@@ -142,7 +142,7 @@ func (entryEventCodec) Unmarshal(in []byte, out *entryEventObject) error {
 	return nil
 }
 
-func (entryEventCodec) ToString(in *entryEventObject) (string) {
+func (entryEventCodec) ToString(in *entryEventObject) string {
 	return "NONE"
 }
 

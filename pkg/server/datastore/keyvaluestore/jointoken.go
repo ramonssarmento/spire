@@ -100,7 +100,7 @@ func (joinTokenCodec) Unmarshal(in []byte, out *joinTokenObject) error {
 	return nil
 }
 
-func (joinTokenCodec) ToString(in *joinTokenObject) (string) {
+func (joinTokenCodec) ToString(in *joinTokenObject) string {
 	return "NONE"
 }
 

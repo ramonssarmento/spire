@@ -139,7 +139,7 @@ func (nodeEventCodec) Unmarshal(in []byte, out *nodeEventObject) error {
 	return nil
 }
 
-func (nodeEventCodec) ToString(in *nodeEventObject) (string) {
+func (nodeEventCodec) ToString(in *nodeEventObject) string {
 	return "NONE"
 }
 
