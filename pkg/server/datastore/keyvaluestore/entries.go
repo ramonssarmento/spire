@@ -508,6 +508,7 @@ func (c *entryIndex) List(req *listRegistrationEntries) (*keyvalue.ListObject, e
 		list.Filters = append(list.Filters, c.downstream.EqualTo(*req.ByDownstream))
 	}
 	if !req.ByExpiresBefore.IsZero() {
+		list.Filters = append(list.Filters, c.expiresAt.GreaterThan(0))
 		list.Filters = append(list.Filters, c.expiresAt.LessThan(req.ByExpiresBefore.Unix()))
 	}
 

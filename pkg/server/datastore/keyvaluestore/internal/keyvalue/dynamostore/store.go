@@ -545,7 +545,7 @@ func (s *Store) List(ctx context.Context, kind string, listObject *keyvalue.List
 		}
 
 		keyCondition = keyCondition.And(expression.Key("ID").GreaterThan(expression.Value(cursor)))
-	}	
+	}
 
 	builder := expression.NewBuilder().WithKeyCondition(keyCondition)
 
@@ -620,7 +620,7 @@ func (s *Store) List(ctx context.Context, kind string, listObject *keyvalue.List
 	return results, nextCursor, nil
 }
 
-func createDynamoFilters(filters []keyvalue.ListOp) (expression.ConditionBuilder, error){
+func createDynamoFilters(filters []keyvalue.ListOp) (expression.ConditionBuilder, error) {
 	filterExpression := expression.ConditionBuilder{}
 
 	for idx, filter := range filters {
